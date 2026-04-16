@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 import threading
 import time
 from dataclasses import dataclass
@@ -46,6 +44,9 @@ class TelegramPollerConfig:
     allowed_updates: list[str] | None = None
     """Filter updates (e.g., ["message", "callback_query"]). None = all."""
 
+    allowed_chat_ids: list[str] | None = None
+    """Optional list of allowed chat IDs. If set, updates from other chats are ignored."""
+
     offset_file: str | None = None
     """Path to file for persisting offset (auto-created if missing)."""
 
@@ -82,6 +83,15 @@ def _save_offset(offset_file: str | None, offset: int) -> None:
         pass
 
 
+def _is_allowed_chat(chat_id: object, allowed_chat_ids: list[str] | None) -> bool:
+    """Check whether a chat ID is allowed by config."""
+    if not allowed_chat_ids:
+        return True
+    if chat_id is None:
+        return False
+    return any(chat_id_matches(allowed, chat_id) for allowed in allowed_chat_ids)
+
+
 def _run_telegram_poller(
     token: str,
     commands: list[TelegramCommandSpec],
@@ -101,15 +111,25 @@ def _run_telegram_poller(
     command_map: dict[str, TelegramCommandHandler] = {cmd.name: cmd.handler for cmd in commands}
 
     while not (stop_event and stop_event.is_set()):
+        updates: list[dict] = []
+        for attempt in range(max(0, int(config.max_retries)) + 1):
+            try:
+                updates = fetch_telegram_updates(
+                    token,
+                    offset=offset,
+                    timeout_seconds=config.poll_timeout_seconds,
+                    allowed_updates=config.allowed_updates,
+                )
+                break
+            except Exception as e:
+                if attempt >= max(0, int(config.max_retries)):
+                    log(f"Polling error: {e}")
+                else:
+                    time.sleep(max(0, int(config.retry_delay_seconds)))
+
         try:
-            updates = fetch_telegram_updates(
-                token=token,
-                timeout=config.poll_timeout_seconds,
-                allowed_updates=config.allowed_updates,
-                offset=offset,
-                retries=config.max_retries,
-                retry_delay=config.retry_delay_seconds,
-            )
+            if not updates:
+                continue
 
             for update in updates:
                 try:
@@ -121,6 +141,8 @@ def _run_telegram_poller(
                     chat_id = message.get("chat", {}).get("id")
 
                     if not text or not chat_id:
+                        continue
+                    if not _is_allowed_chat(chat_id, config.allowed_chat_ids):
                         continue
 
                     # Parse command
@@ -139,11 +161,15 @@ def _run_telegram_poller(
 
                     # Send response
                     if isinstance(response, dict):
-                        response_text = json.dumps(response)
+                        response_text = str(response.get("text") or response.get("message") or "Done")
+                        image_paths = response.get("image_paths")
+                        if not isinstance(image_paths, list):
+                            image_paths = None
                     else:
                         response_text = str(response)
+                        image_paths = None
 
-                    send_telegram_message(token, chat_id, response_text)
+                    send_telegram_message(token, chat_id, response_text, image_paths=image_paths)
 
                 except Exception as e:
                     log(f"Error handling update {update.get('update_id')}: {e}")
