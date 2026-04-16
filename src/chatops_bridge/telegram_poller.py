@@ -169,7 +169,7 @@ def _run_telegram_poller(
                         response_text = str(response)
                         image_paths = None
 
-                    send_telegram_message(token, chat_id, response_text, image_paths=image_paths)
+                    send_telegram_message(str(chat_id), token, response_text, image_paths=image_paths)
 
                 except Exception as e:
                     log(f"Error handling update {update.get('update_id')}: {e}")
