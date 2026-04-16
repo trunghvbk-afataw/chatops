@@ -132,6 +132,7 @@ def _run_telegram_poller(
                 continue
 
             for update in updates:
+                update_id = update.get("update_id")
                 try:
                     message = update.get("message", {})
                     if not message:
@@ -173,11 +174,13 @@ def _run_telegram_poller(
 
                 except Exception as e:
                     log(f"Error handling update {update.get('update_id')}: {e}")
-                    continue
-
-                # Update offset after successful processing
-                offset = update.get("update_id", offset) + 1
-                _save_offset(config.offset_file, offset)
+                finally:
+                    # Always advance the offset for inspected updates so a bad
+                    # command, unknown command, or handler error cannot replay
+                    # the same Telegram update forever.
+                    if isinstance(update_id, int):
+                        offset = max(offset, update_id + 1)
+                        _save_offset(config.offset_file, offset)
 
         except Exception as e:
             log(f"Polling error: {e}")
