@@ -27,6 +27,10 @@ class DiscordBotConfig:
     max_images_per_response: int = 10
     defer_thinking: bool = True
     thread_name_prefix: str = "discord-bot"
+    # Authorization checks
+    enforce_owner_check: bool = True
+    enforce_guild_restriction: bool = True
+    enforce_server_only: bool = True
 
 
 _BOT_THREADS: dict[str, threading.Thread] = {}
@@ -102,13 +106,13 @@ class DiscordSlashBot(discord.Client):
             await guild.leave()
 
     async def _run_command(self, interaction: discord.Interaction, handler: ResponseHandler) -> None:
-        if self._owner_user_id is not None and interaction.user.id != self._owner_user_id:
+        if self._config.enforce_owner_check and self._owner_user_id is not None and interaction.user.id != self._owner_user_id:
             await interaction.response.send_message("Unauthorized.", ephemeral=True)
             return
-        if interaction.guild_id is None and not self._config.allow_dm_commands:
+        if self._config.enforce_server_only and interaction.guild_id is None and not self._config.allow_dm_commands:
             await interaction.response.send_message("Use this command in the bot server.", ephemeral=True)
             return
-        if self._guild_id is not None and interaction.guild_id != self._guild_id:
+        if self._config.enforce_guild_restriction and self._guild_id is not None and interaction.guild_id != self._guild_id:
             await interaction.response.send_message("This bot is not available in this server.", ephemeral=True)
             return
         await interaction.response.defer(thinking=self._config.defer_thinking)
