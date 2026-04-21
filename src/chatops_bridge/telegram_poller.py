@@ -56,6 +56,7 @@ class TelegramPollerConfig:
 
 _TELEGRAM_POLLERS: dict[str, threading.Thread] = {}
 """Map of instance_key -> polling thread."""
+_TELEGRAM_POLLERS_LOCK = threading.Lock()
 
 
 def _load_offset(offset_file: str | None) -> int:
@@ -92,6 +93,10 @@ def _is_allowed_chat(chat_id: object, allowed_chat_ids: list[str] | None) -> boo
     return any(chat_id_matches(allowed, chat_id) for allowed in allowed_chat_ids)
 
 
+def _normalize_command_name(name: str) -> str:
+    return (name or "").strip().lower()
+
+
 def _run_telegram_poller(
     token: str,
     commands: list[TelegramCommandSpec],
@@ -108,10 +113,13 @@ def _run_telegram_poller(
     offset = _load_offset(config.offset_file)
     log(f"Starting polling with offset={offset}")
 
-    command_map: dict[str, TelegramCommandHandler] = {cmd.name: cmd.handler for cmd in commands}
+    command_map: dict[str, TelegramCommandHandler] = {
+        _normalize_command_name(cmd.name): cmd.handler for cmd in commands
+    }
 
     while not (stop_event and stop_event.is_set()):
         updates: list[dict] = []
+        fetch_failed = False
         for attempt in range(max(0, int(config.max_retries)) + 1):
             try:
                 updates = fetch_telegram_updates(
@@ -124,17 +132,20 @@ def _run_telegram_poller(
             except Exception as e:
                 if attempt >= max(0, int(config.max_retries)):
                     log(f"Polling error: {e}")
+                    fetch_failed = True
                 else:
                     time.sleep(max(0, int(config.retry_delay_seconds)))
 
         try:
             if not updates:
+                if fetch_failed:
+                    time.sleep(max(0, int(config.retry_delay_seconds)))
                 continue
 
             for update in updates:
                 update_id = update.get("update_id")
                 try:
-                    message = update.get("message", {})
+                    message = update.get("message") or update.get("edited_message") or {}
                     if not message:
                         continue
 
@@ -223,8 +234,10 @@ def start_telegram_poller(
     if config is None:
         config = TelegramPollerConfig()
 
-    if instance_key in _TELEGRAM_POLLERS:
-        raise ValueError(f"Telegram poller with instance_key='{instance_key}' already running")
+    with _TELEGRAM_POLLERS_LOCK:
+        existing = _TELEGRAM_POLLERS.get(instance_key)
+        if existing is not None and existing.is_alive():
+            raise ValueError(f"Telegram poller with instance_key='{instance_key}' already running")
 
     stop_event = threading.Event()
     thread = threading.Thread(
@@ -234,6 +247,7 @@ def start_telegram_poller(
         daemon=True,
     )
     thread.start()
-    _TELEGRAM_POLLERS[instance_key] = thread
+    with _TELEGRAM_POLLERS_LOCK:
+        _TELEGRAM_POLLERS[instance_key] = thread
 
     return thread
