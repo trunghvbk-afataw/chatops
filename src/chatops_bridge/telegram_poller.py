@@ -94,7 +94,22 @@ def _is_allowed_chat(chat_id: object, allowed_chat_ids: list[str] | None) -> boo
 
 
 def _normalize_command_name(name: str) -> str:
-    return (name or "").strip().lower()
+    """
+    Normalize command name for case-insensitive, whitespace-tolerant matching.
+    
+    Handles:
+    - Case normalization: `/START` → `/start`
+    - Whitespace trimming: `  /start  ` → `/start`
+    - Multiple spaces: `/start  bot` → `/start bot`
+    - None/empty input: `None` → `""`
+    
+    Args:
+        name: Raw command name from user input or command spec
+        
+    Returns:
+        Normalized command name (lowercase, trimmed, single spaces)
+    """
+    return " ".join((name or "").strip().lower().split())
 
 
 def _run_telegram_poller(
@@ -139,6 +154,7 @@ def _run_telegram_poller(
         try:
             if not updates:
                 if fetch_failed:
+                    log("Fetch failed, backing off before next poll...")
                     time.sleep(max(0, int(config.retry_delay_seconds)))
                 continue
 
