@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-05-08
+
+### Fixed
+
+- Made Discord module import optional: Discord symbols are now lazy-loaded only when accessed. Projects that only use Telegram no longer need to install `discord.py`, fixing import errors when Discord is not available.
+- Added fallback error message when Discord features are used without the optional `[discord-bot]` extra.
+
 ## [0.1.4] - 2026-04-16
 
 ### Fixed
